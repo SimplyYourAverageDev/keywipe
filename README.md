@@ -78,3 +78,75 @@ CODESIGN_IDENTITY="Developer ID Application: Your Name" make install
 | `Scripts/build-app.sh` | Assembles and signs the app bundle |
 | `Scripts/signing-identity.sh` | Creates and unlocks the local signing certificate |
 | `Scripts/make-icon.swift` | Draws the icon (`make icon`) |
+
+## Notes for coding agents
+
+Read this before changing anything. It records constraints that are not visible from the
+code alone.
+
+### Installing an update
+
+Run `make install` after a change. It builds, signs, quits a running Keywipe and replaces
+`/Applications/Keywipe.app`. The owner has granted the keyboard permission to the
+installed app and expects never to grant it again, so anything that changes the code
+signature's requirement breaks that expectation:
+
+- Do not delete, regenerate or move `.signing/`, and do not run `git clean -x`.
+- Do not change the bundle identifier (`com.azhua30.keywipe`) in `Resources/Info.plist`.
+- Do not sign ad hoc (`codesign --sign -`) or replace the signing step in
+  `Scripts/build-app.sh`.
+- Do not run `tccutil reset` for Keywipe unless the owner asks; it removes their grant.
+
+To confirm a build still matches, compare `codesign -d -r- /Applications/Keywipe.app`
+before and after. It should stay
+`identifier "com.azhua30.keywipe" and certificate leaf = H"…"` with the same hash.
+
+### Toolchain
+
+Only the Xcode Command Line Tools are installed; there is no Xcode and no `xcodebuild`.
+
+- SwiftUI macros whose plugins ship only with Xcode do not compile here: `@State`,
+  `@Entry`, `@Animatable`, `#Preview`. Use the `ViewState` alias in `KeywipeApp.swift`
+  in place of `@State`. `@Observable` works.
+- There is no `actool`, so no asset catalogs. The icon is an `.icns` drawn by
+  `Scripts/make-icon.swift` (`make icon`).
+- The two `ld: warning: search path … not found` lines come from the toolchain install,
+  not from this project. Any other warning is new.
+- There are no third-party dependencies and no committed tests.
+
+### Behaviour that must hold
+
+- The keyboard can always be unlocked without the keyboard (the button), and the tap is
+  removed on unlock, quit, and loss of the permission.
+- The tap callback runs on its own thread and must return quickly. macOS disables a slow
+  tap, which lets keystrokes through.
+- Pointer button reports share an event type with media keys and must pass through
+  (`BlockedKey.init` returns nil for them), or the mouse stops working while locked.
+- Which key was pressed is never stored or logged; only the count is kept.
+- Interface text is lowercase, set in the system monospaced font, with one accent colour
+  per state (`Theme.swift`).
+
+### Testing a change
+
+Locking for real blocks the owner's keyboard, so keep it to a few seconds and always end
+by killing the process, which removes the tap.
+
+- A binary started from a terminal inherits that terminal's permission, so
+  `build/Keywipe.app/Contents/MacOS/Keywipe` can reach `ready` and lock without its own
+  grant. The installed app uses its own grant.
+- The window can be read and its buttons pressed through the Accessibility API
+  (`AXUIElementCreateApplication`, `kAXPressAction`), and captured with
+  `screencapture -l <window id>`.
+- Post only inert synthetic keys, such as a lone modifier press, with
+  `CGEvent.post(tap: .cghidEventTap)`. Never post letter keys: if the lock leaks, they
+  are typed into whatever app is in front.
+
+### Not yet verified
+
+- That the permission carries over to a rebuilt app after the owner grants it. The
+  signature requirement was checked; the grant itself was not.
+- Physical media keys, the Fn/Globe key and a physical Caps Lock press. They were tested
+  as synthetic events or through the API only.
+- The Secure Event Input states (refusing to lock, and the red warning while locked).
+- That the System Settings link opens the right pane; the pane was already open when it
+  was tried.
