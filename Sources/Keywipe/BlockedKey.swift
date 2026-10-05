@@ -1,5 +1,5 @@
-import AppKit
 import Carbon.HIToolbox
+import CoreGraphics
 import IOKit.hidsystem
 
 /// What the tap reports about one keyboard event it swallowed.
@@ -31,8 +31,10 @@ extension BlockedKey {
     static let eventMask: CGEventMask = [.keyDown, .keyUp, .flagsChanged, systemDefined]
         .reduce(0) { $0 | (1 << CGEventMask($1.rawValue)) }
 
-    /// Classifies an event the tap received. Returns nil for the one kind that must pass
-    /// through untouched: pointer button reports, which share the system-defined type.
+    /// Classifies an event the tap received. Returns nil for what must pass through
+    /// untouched: system-defined events that are not keys, such as pointer button reports.
+    ///
+    /// Runs on the tap's thread, so it must not touch AppKit or the text input system.
     init?(type: CGEventType, event: CGEvent) {
         switch type {
         case .keyDown:
@@ -56,14 +58,17 @@ extension BlockedKey {
             )
 
         case Self.systemDefined:
-            guard let nsEvent = NSEvent(cgEvent: event) else { break }
-            let subtype = Int32(nsEvent.subtype.rawValue)
-            if subtype == NX_SUBTYPE_AUX_MOUSE_BUTTONS { return nil }
+            // Read from the event itself. `NSEvent(cgEvent:)` is the documented way to get
+            // at these values, but for Caps Lock it calls into the text input system, which
+            // traps when it is not on the main thread, and the tap runs on its own thread.
+            let subtype = Int32(truncatingIfNeeded: event.getIntegerValueField(Self.subtypeField))
+            guard Self.keyboardSubtypes.contains(subtype) else { return nil }
             if subtype == NX_SUBTYPE_AUX_CONTROL_BUTTONS {
                 // data1 packs the key code in the high word, then a state byte and a repeat bit.
-                let keyCode = Int32((nsEvent.data1 & 0xFFFF_0000) >> 16)
-                let isDown = (nsEvent.data1 & 0xFF00) >> 8 == 0x0A
-                let isRepeat = nsEvent.data1 & 0x1 != 0
+                let data1 = event.getIntegerValueField(Self.data1Field)
+                let keyCode = Int32((data1 & 0xFFFF_0000) >> 16)
+                let isDown = (data1 & 0xFF00) >> 8 == 0x0A
+                let isRepeat = data1 & 0x1 != 0
                 // Caps Lock is counted here; its flagsChanged twin only triggers the restore.
                 isPress = isDown && !isRepeat
                 isCapsLock = keyCode == NX_KEYTYPE_CAPS_LOCK
@@ -73,6 +78,19 @@ extension BlockedKey {
             return nil
         }
     }
+
+    /// Where a system-defined event keeps what `NSEvent` exposes as `subtype` and `data1`.
+    /// Core Graphics has no named constants for these two fields; the numbers were found by
+    /// comparing against `NSEvent` on macOS 27 (see the README before changing them).
+    private static let subtypeField = CGEventField(rawValue: 83)!
+    private static let data1Field = CGEventField(rawValue: 149)!
+
+    /// The system-defined subtypes that come from keys. Everything else passes through,
+    /// pointer button reports above all. Naming the ones to swallow, instead of the one to
+    /// let through, means a wrong field number leaks media keys but leaves the mouse working.
+    private static let keyboardSubtypes: Set<Int32> = [
+        NX_SUBTYPE_POWER_KEY, NX_SUBTYPE_AUX_CONTROL_BUTTONS, NX_SUBTYPE_EJECT_KEY,
+    ]
 
     /// The device-specific flag bit each modifier key sets while it is held, which tells
     /// a press from a release when the other key of the pair is also down.
