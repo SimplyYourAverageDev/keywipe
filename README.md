@@ -8,11 +8,12 @@ into whatever is open. The mouse and trackpad keep working.
 Requires macOS 27 and the Xcode Command Line Tools (Swift 6.4). Xcode itself is not needed.
 
 ```sh
-make app    # builds build/Keywipe.app
-make run    # builds, then opens it
+make install    # builds, then installs to /Applications/Keywipe.app
+make app        # only builds build/Keywipe.app
+make run        # builds, then opens the copy in build/
 ```
 
-Move `build/Keywipe.app` to `/Applications` if you want to keep it around.
+Run `make install` again after changing the code to update the installed app.
 
 ## First launch
 
@@ -40,20 +41,29 @@ Keywipe counts the keys it catches but never records which ones they were.
   that is the case and names the app responsible; if it starts while the keyboard is
   locked, the window turns red and says keys are getting through.
 
-## After rebuilding
+## Signing and the permission
 
-The default build is signed ad hoc, so macOS treats every rebuild as a different app and
-the permission stops applying, even though the switch in System Settings still looks on.
-Remove Keywipe from the list with the minus button and grant access again, or run:
+macOS ties the permission to the app's code signature, not to its name or location. So
+that an updated build keeps the permission, every build is signed with the same
+self-signed certificate. `Scripts/signing-identity.sh` creates it on the first build and
+stores it in `.signing/`, a keychain file inside this folder that is not checked in and is
+not added to your keychain list.
+
+Keep `.signing/`. If it is deleted (`make clean` leaves it alone, `git clean -x` does
+not), the next build gets a new certificate and macOS no longer recognises the app. The
+switch in System Settings still looks on in that case; clear it and grant access again:
 
 ```sh
 tccutil reset Accessibility com.azhua30.keywipe
 ```
 
-To avoid this, sign with a certificate that stays the same between builds:
+Anything signed with that certificate under Keywipe's identifier is treated by macOS as
+Keywipe, so treat `.signing/` as private to this Mac.
+
+To sign with a certificate from your own keychain instead:
 
 ```sh
-CODESIGN_IDENTITY="Developer ID Application: Your Name" make app
+CODESIGN_IDENTITY="Developer ID Application: Your Name" make install
 ```
 
 ## Layout
@@ -66,4 +76,5 @@ CODESIGN_IDENTITY="Developer ID Application: Your Name" make app
 | `Sources/Keywipe/SystemKeyboard.swift` | Permission, Secure Event Input and Caps Lock access |
 | `Sources/Keywipe/TerminalView.swift`, `Theme.swift` | The window |
 | `Scripts/build-app.sh` | Assembles and signs the app bundle |
+| `Scripts/signing-identity.sh` | Creates and unlocks the local signing certificate |
 | `Scripts/make-icon.swift` | Draws the icon (`make icon`) |

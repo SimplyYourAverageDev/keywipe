@@ -6,5 +6,8 @@ Package.resolved
 # Assembled app bundle and icon intermediates
 build/
 
+# Local signing keychain and its password; private to this machine
+.signing/
+
 # macOS
 .DS_Store
