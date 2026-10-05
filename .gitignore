@@ -1,0 +1,10 @@
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Assembled app bundle and icon intermediates
+build/
+
+# macOS
+.DS_Store
